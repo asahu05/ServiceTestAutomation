@@ -1,0 +1,723 @@
+Virtulization Application:
+
+package com.pasw.virtualization;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.context.web.SpringBootServletInitializer;
+
+@SpringBootApplication
+public class VirtualizationApplication extends SpringBootServletInitializer{
+
+	public static void main(final String[] args) {
+        SpringApplication.run(VirtualizationApplication.class, args);
+    }
+
+	@Override
+	protected SpringApplicationBuilder configure(
+						SpringApplicationBuilder builder) {
+		return builder.sources(VirtualizationApplication.class);
+	}
+}
+
+Virtualization Client Impl:
+package com.pasw.virtualization.client;
+
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.client.RestTemplate;
+
+@RestController
+public class VirtualizationClientImpl{
+	
+	private String host;
+		
+	public String callService(final String request, final String serviceURI)
+	{
+		final HttpEntity<String> entity =
+		        new HttpEntity<String>(request);
+
+		final ResponseEntity<String> response =
+		        this.buildJsonTemplate()
+		        	.exchange(getHost() + serviceURI, 
+		        				HttpMethod.POST, 
+		        				entity,
+		        				String.class);
+
+		return response.getBody();
+	}
+	
+	protected RestTemplate buildJsonTemplate()
+	{
+		final RestTemplate template = new RestTemplate();
+
+		final SimpleClientHttpRequestFactory simpleClientHttpRequestFactory = 
+				new SimpleClientHttpRequestFactory();
+		
+		template.setRequestFactory(simpleClientHttpRequestFactory);
+
+		return template;
+	}
+	
+	public String getHost() {
+		return host;
+	}
+
+	public void setHost(String host) {
+		this.host = host;
+	}
+
+}
+
+Virtulization Controller:
+package com.pasw.virtualization;
+
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public interface VirtualizationController {
+	
+}
+
+Populate Response Controller :
+
+package com.pasw.virtualization;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.LineNumberReader;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.ResourceLoader;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+
+@Controller
+public class PopulateResponseController implements VirtualizationController {
+	
+	@Autowired
+	private ResourceLoader resourceLoader;
+	
+	final static Charset ENCODING = StandardCharsets.UTF_8;
+	
+   @RequestMapping(value = "/setup/response", 
+		   			method = RequestMethod.POST, 
+		   			produces="application/json",
+		   			consumes="application/json"
+		   			)
+    public boolean createResponseFiles() 
+    		throws IOException {
+	   
+	    Resource tomcatLogResource = resourceLoader.getResource("classpath:/tomcat.log");
+	    Path readFilePath = Paths.get(tomcatLogResource.getURI());
+	    try (
+	    		BufferedReader reader = Files.newBufferedReader(readFilePath, ENCODING);
+	    		LineNumberReader lineReader = new LineNumberReader(reader);
+	    		)
+	    {
+	      String line = null;
+	      while ((line = lineReader.readLine()) != null) {
+	       Pattern startResRegexp = Pattern.compile(".*(Response body=#*)([^']*).*");
+	   	   Matcher startResMatcher = startResRegexp.matcher(line); 
+	        if(startResMatcher.matches()){
+	        	String fileName = null;
+	        	StringBuilder jsonResponse = new StringBuilder();
+	        	fileName = getFileName(line);	        	
+	        	
+	        	jsonResponse.append(startResMatcher.group(2));
+	        	while((line = lineReader.readLine()) != null){
+	        		if(getResponseComplete(line)) break;
+	        		jsonResponse.append(line);
+	        	}
+	        	String mid = getMid(jsonResponse.toString());
+	        	
+	        	createMidDirectory(mid);
+	        	createResponseFile(mid, fileName, jsonResponse.toString());
+	        }
+	      }
+		}catch (IOException ex){
+		      ex.printStackTrace();
+		}
+        return true;
+    }
+   
+   private boolean createMidDirectory(String mid) throws IOException{
+	   String home = System.getProperty("user.dir");
+ 	   String folder = "/resources/" + mid;
+   	   Path path = Paths.get(home, folder);
+	   if (!Files.exists(path)) {
+  			Files.createDirectories(path);
+	   }
+	   return true;
+   }
+   
+   private boolean createResponseFile(String mid, String fileName, String jsonResponse)
+   		throws IOException{
+	    String file = "/" + fileName + ".json";
+	    String home = System.getProperty("user.dir");
+	    String folder = "/resources/" + mid;
+		Path createdFile = Files.write( Paths.get(home, folder, file), 
+	   									jsonResponse.toString().getBytes(), 
+	   									StandardOpenOption.CREATE);
+	   	if(createdFile.getFileName() != null)
+	   		return true;
+	   	return false;
+   }
+   
+   private String getMid(String json){
+	   Pattern midRegexp = Pattern.compile("(?<=\"mid\":\").*?(?=\",)");
+	   Matcher midMatcher = midRegexp.matcher(json);
+	   if(midMatcher.find()){
+		   return midMatcher.group(0).trim();
+	   }
+	  return "";
+   }
+   
+   private String getFileName(String line){
+	   Pattern messageRegexp = Pattern.compile(".*(message=*).*(2014/10*)([^']*).*~");
+	   Matcher messageMatcher = messageRegexp.matcher(line);
+	   String[] uriContent = null;
+	   StringBuilder fileName = new StringBuilder();
+	   if(messageMatcher.find()){
+		   uriContent  = messageMatcher.group(3).trim().split("/");
+	   }	   
+	   for(int i = uriContent.length-1 ; i > 0; i--){
+		   fileName.append(uriContent[i]);
+		   if(i > 1){
+			   fileName.append("_");
+		   }
+	   }
+	  return fileName.toString();
+   }
+   
+   private boolean getResponseComplete(String line){
+	   Pattern endResRegexp = Pattern.compile(".*(########################################*).*");
+	   Matcher endResMatcher = endResRegexp.matcher(line);
+	   if(endResMatcher.find()){
+			return true;
+	   }
+	   return false;		 
+   }
+}
+
+
+
+Goal Controller:
+package com.pasw.virtualization;
+
+import java.io.IOException;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+
+import com.pasw.virtualization.domain.ServiceRequest;
+import com.pasw.virtualization.goal.GoalService;
+
+@Controller
+public class GoalController implements VirtualizationController {
+
+	@Autowired
+	private GoalService goalService;
+	
+   @RequestMapping(value = "/goal/2014/10/goal/get", 
+		   			method = RequestMethod.POST, 
+		   			produces="application/json",
+		   			consumes="application/json"
+		   			)
+    public String getGoal(@RequestBody final ServiceRequest serviceRequest) 
+    		throws IOException {
+        return goalService.get(serviceRequest.getUserIdentifier().getMid());
+    }
+}
+
+
+Goal Service:
+package com.pasw.virtualization.goal;
+
+import java.io.IOException;
+
+public interface GoalService {
+
+	public String get(String ssn) throws IOException;
+
+}
+
+Goal Service Impl:
+package com.pasw.virtualization.goal;
+
+import java.io.IOException;
+import java.io.InputStream;
+
+import org.apache.commons.io.IOUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.ResourceLoader;
+import org.springframework.stereotype.Service;
+
+@Service
+public class GoalServiceImpl implements GoalService{
+
+	@Autowired
+    private ResourceLoader resourceLoader;
+	
+	@Override
+	public String get(String ssn) throws IOException {
+		Resource resource = resourceLoader.getResource("classpath:" + ssn + "/goal_get.json");
+        InputStream inputStream = resource.getInputStream();
+
+        String mockResponse = IOUtils.toString(inputStream, "UTF-8");
+
+        return mockResponse;
+	}
+
+}
+
+UserIdentifier:
+package com.pasw.virtualization.domain;
+
+public class UserIdentifier {
+	
+	private String mid;
+	private String sid;
+	private String retailLid;
+	private String filiLid;
+	private String fescoLid;
+	private String foid;
+	private String acmData;
+	private String pointOfEntry;
+	private String repInformation;
+	private String role;
+	private String lbd;
+	private String prospectId;
+	private String groupId;
+	
+	
+	public String getMid() {
+		return mid;
+	}
+	public void setMid(String mid) {
+		this.mid = mid;
+	}
+	public String getSid() {
+		return sid;
+	}
+	public void setSid(String sid) {
+		this.sid = sid;
+	}
+	public String getRetailLid() {
+		return retailLid;
+	}
+	public void setRetailLid(String retailLid) {
+		this.retailLid = retailLid;
+	}
+	public String getFiliLid() {
+		return filiLid;
+	}
+	public void setFiliLid(String filiLid) {
+		this.filiLid = filiLid;
+	}
+	public String getFescoLid() {
+		return fescoLid;
+	}
+	public void setFescoLid(String fescoLid) {
+		this.fescoLid = fescoLid;
+	}
+	public String getFoid() {
+		return foid;
+	}
+	public void setFoid(String foid) {
+		this.foid = foid;
+	}
+	public String getAcmData() {
+		return acmData;
+	}
+	public void setAcmData(String acmData) {
+		this.acmData = acmData;
+	}
+	public String getPointOfEntry() {
+		return pointOfEntry;
+	}
+	public void setPointOfEntry(String pointOfEntry) {
+		this.pointOfEntry = pointOfEntry;
+	}
+	public String getRepInformation() {
+		return repInformation;
+	}
+	public void setRepInformation(String repInformation) {
+		this.repInformation = repInformation;
+	}
+	public String getRole() {
+		return role;
+	}
+	public void setRole(String role) {
+		this.role = role;
+	}
+	public String getLbd() {
+		return lbd;
+	}
+	public void setLbd(String lbd) {
+		this.lbd = lbd;
+	}
+	public String getProspectId() {
+		return prospectId;
+	}
+	public void setProspectId(String prospectId) {
+		this.prospectId = prospectId;
+	}
+	public String getGroupId() {
+		return groupId;
+	}
+	public void setGroupId(String groupId) {
+		this.groupId = groupId;
+	}
+}
+
+Scenario id:
+package com.pasw.virtualization.domain;
+
+public class ScenarioId {
+	
+	private String productCode;
+	private String categoryCode;
+	private String managedAccountId;
+	private String entityId;
+	private String entityTypeCode;
+	private String id;
+	
+	public String getProductCode() {
+		return productCode;
+	}
+	public void setProductCode(String productCode) {
+		this.productCode = productCode;
+	}
+	public String getCategoryCode() {
+		return categoryCode;
+	}
+	public void setCategoryCode(String categoryCode) {
+		this.categoryCode = categoryCode;
+	}
+	public String getManagedAccountId() {
+		return managedAccountId;
+	}
+	public void setManagedAccountId(String managedAccountId) {
+		this.managedAccountId = managedAccountId;
+	}
+	public String getEntityId() {
+		return entityId;
+	}
+	public void setEntityId(String entityId) {
+		this.entityId = entityId;
+	}
+	public String getEntityTypeCode() {
+		return entityTypeCode;
+	}
+	public void setEntityTypeCode(String entityTypeCode) {
+		this.entityTypeCode = entityTypeCode;
+	}
+	public String getId() {
+		return id;
+	}
+	public void setId(String id) {
+		this.id = id;
+	}
+
+}
+
+
+service Request:
+package com.pasw.virtualization.domain;
+
+public class ServiceRequest {
+	
+	private UserIdentifier userIdentifier;
+	
+	private ScenarioId scenarioId;
+
+	public UserIdentifier getUserIdentifier() {
+		return userIdentifier;
+	}
+
+	public void setUserIdentifier(UserIdentifier userIdentifier) {
+		this.userIdentifier = userIdentifier;
+	}
+
+	public ScenarioId getScenarioId() {
+		return scenarioId;
+	}
+
+	public void setScenarioId(ScenarioId scenarioId) {
+		this.scenarioId = scenarioId;
+	}
+}
+
+
+TestVirtualizationClient:
+package com.testsvc;
+
+
+
+import org.junit.Assert;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.SpringApplicationConfiguration;
+import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
+import org.springframework.test.context.web.WebAppConfiguration;
+
+import com.pasw.virtualization.VirtualizationApplication;
+import com.pasw.virtualization.client.VirtualizationClientImpl;
+
+@RunWith(SpringJUnit4ClassRunner.class)
+@SpringApplicationConfiguration(classes = VirtualizationApplication.class)
+@WebAppConfiguration
+public class TestVirtualizationClient {
+
+	/** The constant for REST Path. */
+	private static final String SERVICE_2014_10_WORKPLACEPLAN_GET = "/workplaceplan/2014/10/workplaceplan/get";
+	
+	/** The Constant testUrl. */
+	private final static String testUrl = "http://localhost:8080";
+	
+	@Autowired
+	private VirtualizationClientImpl client;
+
+	/**
+	 * Test call Account.
+	 */
+	@Test
+	public void testGetWorkplacePlan()
+	{
+		client.setHost(testUrl);
+
+		String request = "dcm_513768818_35022";
+		final String response =
+		        client.callService(request, SERVICE_2014_10_WORKPLACEPLAN_GET);
+
+		Assert.assertNotNull(response);
+	}
+}
+
+
+pom :
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<groupId>com.fmr.pasw.virtualization</groupId>
+	<artifactId>pasw-virtualization</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+	<packaging>war</packaging>
+
+	<name>pasw-virtualization</name>
+	<description>service virtualization</description>
+
+	<!-- lookup parent from repository -->
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>1.3.1.RELEASE</version>
+		<relativePath/> 
+	</parent>
+
+	<properties>
+		<m2eclipse.wtp.contextRoot>pasw-virtualization</m2eclipse.wtp.contextRoot>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<java.version>1.8</java.version>
+		<!-- <start-class>com.pasw.virtualization.VirtualizationApplication</start-class> -->
+	</properties>
+
+	<dependencies>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-jersey</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-web</artifactId>
+			<exclusions>
+            <exclusion>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-tomcat</artifactId>
+            </exclusion>
+        </exclusions>
+		</dependency>
+		<!-- <dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-tomcat</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.tomcat.embed</groupId>
+			<artifactId>tomcat-embed-core</artifactId>
+			<scope>provided</scope>
+		</dependency> -->
+		<dependency>
+			<groupId>org.apache.tomcat.embed</groupId>
+			<artifactId>tomcat-embed-el</artifactId>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+			<groupId>org.springframework</groupId>
+			<artifactId>spring-webmvc</artifactId>
+		</dependency>
+		<dependency>
+		    <groupId>commons-io</groupId>
+		    <artifactId>commons-io</artifactId>
+		    <version>2.4</version>
+		</dependency>
+
+	</dependencies>
+	
+	<build>
+		<resources>
+	        <resource>
+	            <directory>src/main/resources</directory>
+	            <filtering>true</filtering>
+	            <includes>
+	                <include>**/*.log</include>
+	            </includes>
+	        </resource>
+	    </resources>
+		<plugins>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+				<configuration>
+					<addResources>true</addResources>
+		      	</configuration>
+			</plugin>
+		</plugins>
+	</build>
+
+</project>
+
+Start.sh:
+#!/usr/bin/bash
+
+PORT=8080
+
+mvn clean package -DskipTests=true
+
+echo
+echo
+echo "launching mock service on port $PORT ..."
+echo
+
+java -Dserver.port=$PORT -jar target/pasw-virtualization-0.0.1-SNAPSHOT.jar
+
+
+.classpath :
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="src" output="target/classes" path="src/main/java">
+		<attributes>
+			<attribute name="optional" value="true"/>
+			<attribute name="maven.pomderived" value="true"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry excluding="**" kind="src" output="target/classes" path="src/main/resources">
+		<attributes>
+			<attribute name="maven.pomderived" value="true"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry kind="src" output="target/test-classes" path="src/test/java">
+		<attributes>
+			<attribute name="optional" value="true"/>
+			<attribute name="maven.pomderived" value="true"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry kind="con" path="org.eclipse.m2e.MAVEN2_CLASSPATH_CONTAINER">
+		<attributes>
+			<attribute name="maven.pomderived" value="true"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER">
+		<attributes>
+			<attribute name="maven.pomderived" value="true"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry kind="con" path="org.eclipse.jst.j2ee.internal.web.container"/>
+	<classpathentry kind="con" path="org.eclipse.jst.j2ee.internal.module.container"/>
+	<classpathentry kind="output" path="target/classes"/>
+</classpath>
+
+
+.project :
+
+<?xml version="1.0" encoding="UTF-8"?>
+<projectDescription>
+	<name>pasw-virtualization</name>
+	<comment></comment>
+	<projects>
+	</projects>
+	<buildSpec>
+		<buildCommand>
+			<name>org.eclipse.wst.jsdt.core.javascriptValidator</name>
+			<arguments>
+			</arguments>
+		</buildCommand>
+		<buildCommand>
+			<name>org.eclipse.wst.common.project.facet.core.builder</name>
+			<arguments>
+			</arguments>
+		</buildCommand>
+		<buildCommand>
+			<name>org.eclipse.jdt.core.javabuilder</name>
+			<arguments>
+			</arguments>
+		</buildCommand>
+		<buildCommand>
+			<name>org.springframework.ide.eclipse.core.springbuilder</name>
+			<arguments>
+			</arguments>
+		</buildCommand>
+		<buildCommand>
+			<name>org.eclipse.m2e.core.maven2Builder</name>
+			<arguments>
+			</arguments>
+		</buildCommand>
+		<buildCommand>
+			<name>org.eclipse.wst.validation.validationbuilder</name>
+			<arguments>
+			</arguments>
+		</buildCommand>
+	</buildSpec>
+	<natures>
+		<nature>org.eclipse.jem.workbench.JavaEMFNature</nature>
+		<nature>org.eclipse.wst.common.modulecore.ModuleCoreNature</nature>
+		<nature>org.sonar.ide.eclipse.core.sonarNature</nature>
+		<nature>org.springframework.ide.eclipse.core.springnature</nature>
+		<nature>org.eclipse.jdt.core.javanature</nature>
+		<nature>org.eclipse.m2e.core.maven2Nature</nature>
+		<nature>org.eclipse.wst.common.project.facet.core.nature</nature>
+		<nature>org.eclipse.wst.jsdt.core.jsNature</nature>
+	</natures>
+</projectDescription>
+
+
+To Convert web project :
+create a Web Project? If you right click on the project and go to Properties > Project Facets is Dynamic Web Module, Java script and java selected? 
+
+
