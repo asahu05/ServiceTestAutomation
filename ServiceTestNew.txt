@@ -1,0 +1,773 @@
+application.properties:
+spring.jmx.enabled: false
+info.version: 1.0
+
+## path config
+resource:resources
+
+
+# file name
+
+### Goal Service
+get_goal_file_name:get_goal.json
+create_goal_file_name:create_goal.json
+update_goal_file_name:update_goal.json
+delete_goal_file_name:delete_goal.json
+
+### Account Registration service
+get_accountregistration_file_name:get_accountregistration.json
+
+### Calculator Service
+calculator_convertDollars_file_name:calculator_convertDollars.json
+calculator_estimatesocialsecurity_file_name:calculator_estimatesocialsecurity.json
+
+### workplace plan service
+get_workplaceplan_file_name:get_workplaceplan.json
+get_participant_workplaceplan_file_name:get_participant_workplaceplan.json
+
+VirtualizationAplication:
+package com.pasw.virtualization;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.web.support.SpringBootServletInitializer;
+	
+@SpringBootApplication
+public class VirtualizationApplication extends SpringBootServletInitializer{
+
+	public static void main(final String[] args) {
+        SpringApplication.run(VirtualizationApplication.class, args);
+    }
+
+	@Override
+	protected SpringApplicationBuilder configure(
+						SpringApplicationBuilder builder) {
+		return builder.sources(VirtualizationApplication.class);
+	}
+}
+
+VirtualizationController:
+package com.pasw.virtualization;
+
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@EnableAutoConfiguration
+@RequestMapping(value="/")
+public interface VirtualizationController {
+	
+}
+
+
+
+PopulateResponseController:
+package com.pasw.virtualization;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.IOException;
+import java.io.LineNumberReader;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.ResourceLoader;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+
+@Controller
+@EnableAutoConfiguration
+@RequestMapping(value = "/response")
+public class PopulateResponseController implements VirtualizationController {
+	
+	@Value("${resource}")
+	private String resource;
+	
+	private String home = System.getProperty("user.dir");
+	
+	private String folder = fileSeperator + resource + fileSeperator;
+	
+	public static final String fileSeperator = File.separator;
+	
+	@Autowired
+	private ResourceLoader resourceLoader;
+	
+	final static Charset ENCODING = StandardCharsets.UTF_8;
+	
+   @RequestMapping(value = "/setup", 
+		   			method = RequestMethod.POST, 
+		   			produces="application/json",
+		   			consumes="application/json"
+		   			)
+    public boolean createResponseFiles() 
+    		throws IOException {
+	   
+	    Resource tomcatLogResource = resourceLoader.getResource("classpath:/tomcat.log");
+	    Path readFilePath = Paths.get(tomcatLogResource.getURI());
+	    try (
+	    		BufferedReader reader = Files.newBufferedReader(readFilePath, ENCODING);
+	    		LineNumberReader lineReader = new LineNumberReader(reader);
+	    		)
+	    {
+	      String line = null;
+	      while ((line = lineReader.readLine()) != null) {
+	       Pattern startResRegexp = Pattern.compile(".*(Response body=#*)([^']*).*");
+	   	   Matcher startResMatcher = startResRegexp.matcher(line); 
+	        if(startResMatcher.matches()){
+	        	String fileName = null;
+	        	StringBuilder jsonResponse = new StringBuilder();
+	        	fileName = getFileName(line);	        	
+	        	
+	        	jsonResponse.append(startResMatcher.group(2));
+	        	while((line = lineReader.readLine()) != null){
+	        		if(getResponseComplete(line)) break;
+	        		jsonResponse.append(line);
+	        	}
+	        	String mid = getMid(jsonResponse.toString());
+	        	
+	        	createMidDirectory(mid);
+	        	createResponseFile(mid, fileName, jsonResponse.toString());
+	        }
+	      }
+		}catch (IOException ex){
+		      ex.printStackTrace();
+		      return false;
+		}
+        return true;
+    }
+   
+   private boolean createMidDirectory(String mid) throws IOException{
+   	   Path path = Paths.get(home, folder, mid);
+	   if (!Files.exists(path)) {
+  			Files.createDirectories(path);
+	   }
+	   return true;
+   }
+   
+   private boolean createResponseFile(String mid, String fileName, String jsonResponse)
+   		throws IOException{
+	    String file = fileSeperator + fileName + ".json";
+		Path createdFile = Files.write( Paths.get(home, folder, mid, file), 
+	   									jsonResponse.toString().getBytes(), 
+	   									StandardOpenOption.CREATE);
+	   	if(createdFile.getFileName() != null)
+	   		return true;
+	   	return false;
+   }
+   
+   private String getMid(String json){
+	   Pattern midRegexp = Pattern.compile("(?<=\"mid\":\").*?(?=\",)");
+	   Matcher midMatcher = midRegexp.matcher(json);
+	   if(midMatcher.find()){
+		   return midMatcher.group(0).trim();
+	   }
+	  return "";
+   }
+   
+   private String getFileName(String line){
+	   Pattern messageRegexp = Pattern.compile(".*(message=*).*(2014/10*)([^']*).*~");
+	   Matcher messageMatcher = messageRegexp.matcher(line);
+	   String[] uriContent = null;
+	   StringBuilder fileName = new StringBuilder();
+	   if(messageMatcher.find()){
+		   uriContent  = messageMatcher.group(3).trim().split("/");
+	   }	   
+	   for(int i = uriContent.length-1 ; i > 0; i--){
+		   fileName.append(uriContent[i]);
+		   if(i > 1){
+			   fileName.append("_");
+		   }
+	   }
+	  return fileName.toString();
+   }
+   
+   private boolean getResponseComplete(String line){
+	   Pattern endResRegexp = Pattern.compile(".*(########################################*).*");
+	   Matcher endResMatcher = endResRegexp.matcher(line);
+	   if(endResMatcher.find()){
+			return true;
+	   }
+	   return false;		 
+   }
+}
+
+
+
+VirtualizationService:
+package com.pasw.virtualization;
+
+import java.io.File;
+
+public interface VirtualizationService {
+	
+	public static final String fileSeperator = File.separator;
+	public static final String home = System.getProperty("user.dir") + fileSeperator;
+	
+
+}
+AccountRegistrationController:
+package com.pasw.virtualization;
+
+import java.io.IOException;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+
+import com.pasw.virtualization.accountregistration.AccountRegistrationService;
+import com.pasw.virtualization.domain.ServiceRequest;
+
+@Controller
+@EnableAutoConfiguration
+@RequestMapping(value="/accountregistration/2014/10/accountregistration")
+public class AccountRegistrationController implements VirtualizationController {
+
+	@Autowired
+	private AccountRegistrationService accountRegistrationService;
+	
+   @RequestMapping(value = "/get", 
+		   			method = RequestMethod.POST, 
+		   			produces="application/json",
+		   			consumes="application/json"
+		   			)
+    public String getAccountRegistration(@RequestBody final ServiceRequest serviceRequest) 
+    		throws IOException {
+        return accountRegistrationService.get(serviceRequest.getUserIdentifier().getMid());
+    }
+}
+
+AccountRegistrationService:
+package com.pasw.virtualization.accountregistration;
+
+import java.io.IOException;
+
+import com.pasw.virtualization.VirtualizationService;
+
+public interface AccountRegistrationService extends VirtualizationService {
+
+	public String get(String ssn) throws IOException;
+
+}
+
+
+AccountRegistrationImpl:
+package com.pasw.virtualization.accountregistration;
+
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+import org.apache.commons.io.IOUtils;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+@Service
+public class AccountResgistrationServiceImpl implements AccountRegistrationService{
+
+	@Value("${resource}")
+	private String resource;
+	
+	@Value("${get_accountregistration_file_name}")
+	private String get_accountregistration_file_name;
+	
+	@Override
+	public String get(String mid) throws IOException {
+		String midFolder = new String (resource + fileSeperator + mid).trim();
+		
+	   	Path path = Paths.get(home, fileSeperator, midFolder , 
+	   			fileSeperator, get_accountregistration_file_name);
+	   	
+	   	InputStream inputStream = new ByteArrayInputStream(Files.readAllBytes(path)); 
+
+        String response = IOUtils.toString(inputStream, "UTF-8");
+
+	    return response;
+	}
+
+}
+
+CalculatorController:
+package com.pasw.virtualization;
+
+import java.io.IOException;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+
+import com.pasw.virtualization.calculator.CalculatorService;
+import com.pasw.virtualization.domain.ServiceRequest;
+
+@Controller
+@EnableAutoConfiguration
+@RequestMapping(value = "/calculator/2014/10/calculator")
+public class CalculatorController implements VirtualizationController {
+
+	@Autowired
+	private CalculatorService calculatorService;
+	
+    @RequestMapping(value = "/convertDollars", 
+		   			method = RequestMethod.POST, 
+		   			produces="application/json",
+		   			consumes="application/json"
+		   			)
+    public String convertDollars(@RequestBody final ServiceRequest serviceRequest) 
+    		throws IOException {
+        return calculatorService.convertDollers(serviceRequest.getUserIdentifier().getMid());
+    }
+   
+    @RequestMapping(value = "/estimatesocialsecurity", 
+  			method = RequestMethod.POST, 
+  			produces="application/json",
+   			consumes="application/json"
+   			)
+	public String estimatedSocialSecurity(@RequestBody final ServiceRequest serviceRequest) 
+    		throws IOException {
+    	return calculatorService.estimateSocialSecurity(serviceRequest.getUserIdentifier().getMid());
+	}
+}
+
+CalculatroService:
+package com.pasw.virtualization.calculator;
+
+import java.io.IOException;
+
+import com.pasw.virtualization.VirtualizationService;
+
+public interface CalculatorService extends VirtualizationService{
+
+	String convertDollers(String ssn) throws IOException;
+	String estimateSocialSecurity(String ssn) throws IOException;
+
+}
+
+CalculatorServiceImpl
+
+package com.pasw.virtualization.calculator;
+
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+import org.apache.commons.io.IOUtils;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+@Service
+public class CalculatorServiceImpl implements CalculatorService{
+
+	@Value("${resource}")
+	private String resource;
+	
+	@Value("${calculator_convertDollars_file_name}")
+	private String calculator_convertDollars_file_name;
+	
+	@Value("${calculator_estimatesocialsecurity_file_name}")
+	private String calculator_estimatesocialsecurity_file_name;
+	
+	@Value("${update_goal_file_name}")
+	private String update_goal_file_name;
+	
+	@Value("${delete_goal_file_name}")
+	private String delete_goal_file_name;
+	
+	@Override
+	public String convertDollers(String mid) throws IOException {
+		String midFolder = new String (resource + fileSeperator + mid).trim();
+		
+	   	Path path = Paths.get(home, fileSeperator, midFolder , 
+	   			fileSeperator, calculator_convertDollars_file_name);
+	   	
+	   	InputStream inputStream = new ByteArrayInputStream(Files.readAllBytes(path)); 
+
+        String response = IOUtils.toString(inputStream, "UTF-8");
+
+        return response;
+	}
+
+	@Override
+	public String estimateSocialSecurity(String mid) throws IOException {
+		String midFolder = new String (resource + fileSeperator + mid).trim();
+		
+	   	Path path = Paths.get(home, fileSeperator, midFolder , 
+	   			fileSeperator, calculator_estimatesocialsecurity_file_name);
+	   	
+	   	InputStream inputStream = new ByteArrayInputStream(Files.readAllBytes(path)); 
+
+        String response = IOUtils.toString(inputStream, "UTF-8");
+
+        return response;
+        
+	}
+}
+
+tomcatLog:
+########################################
+2016/09/16 11:34:34:869 [Severity=WARN] message=Building Cookie for SSN {ThreadId=http-apr-8090-exec-10|File=CsCookieFilter.java|Method=doFilter|Line=86|AppId=AP002360|TrackingId=8fe9d8f6-fc7d-43cf-bbc5-dc315e800ea3|RepId=|RefId=AP002360431433952|RequestUri=/ftgw/pasw/service/dublinSimulator|SessionId=63368F16DE95EC3DAA8D8084D9836A34|SID=5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77|MID=eee16d45b674fe11d688b9ac196951aa77}
+########################################
+2016/09/16 11:34:34:870 [Severity=WARN] message=Using Plan Id {ThreadId=http-apr-8090-exec-10|File=CsCookieFilter.java|Method=doFilter|Line=87|AppId=AP002360|TrackingId=8fe9d8f6-fc7d-43cf-bbc5-dc315e800ea3|RepId=|RefId=AP002360431433952|RequestUri=/ftgw/pasw/service/dublinSimulator|SessionId=63368F16DE95EC3DAA8D8084D9836A34|SID=5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77|MID=eee16d45b674fe11d688b9ac196951aa77}
+########################################
+2016/09/16 11:34:35:278 [Severity=WARN] message=Dublin Simulator Entry Detected:{ssn=[431433952], plan=[35022]} {ThreadId=http-apr-8090-exec-10|File=DublinSimulatorController.java|Method=simulate|Line=98|AppId=AP002360|TrackingId=8fe9d8f6-fc7d-43cf-bbc5-dc315e800ea3|RepId=|RefId=AP002360431433952|RequestUri=/ftgw/pasw/service/dublinSimulator|SessionId=63368F16DE95EC3DAA8D8084D9836A34|SID=5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77|MID=eee16d45b674fe11d688b9ac196951aa77}
+########################################
+2016/09/16 11:34:35:280 [Severity=WARN] message=Try Patching File with shortcut C:\Users\A584737\apache-tomcat-7.0.68 431433952 35022 {ThreadId=http-apr-8090-exec-10|File=DublinSimulatorController.java|Method=writeShortCut|Line=130|AppId=AP002360|TrackingId=8fe9d8f6-fc7d-43cf-bbc5-dc315e800ea3|RepId=|RefId=AP002360431433952|RequestUri=/ftgw/pasw/service/dublinSimulator|SessionId=63368F16DE95EC3DAA8D8084D9836A34|SID=5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77|MID=eee16d45b674fe11d688b9ac196951aa77}
+########################################
+2016/09/16 11:34:35:281 [Severity=WARN] message=<!DOCTYPE html>
+<html>
+  <head>
+    <title>Portfolio Advisory Services AT WORK</title>
+    <script>
+    window.onload = function() {
+        console.log("window load");
+        var anchors = document.getElementsByTagName('input');
+        for(var i = 0; i < anchors.length; i++) {
+            var anchor = anchors[i];
+            
+            if(anchor.className && anchor.className.indexOf("quickLink") > -1) {
+                
+                anchor.onclick = function(event) {
+                    document.getElementById("planId").value = event.target.getAttribute("data-planId");
+                    document.getElementById("ssn").value = event.target.getAttribute("data-ssn");
+                    document.getElementById("submit").click();
+                }
+            }
+        }
+    }
+    </script>
+  </head>
+  <body>
+    <font face='arial,helvetica'>
+      <h2>Dublin PASW Log-In Simulator</h2>
+      <hr width='635' align='left' />
+      <h3>Request Simulator</h3>
+	  <h4>BUILD VERSION: PASW-OLE_1.0.0.local</h4>
+    </font>
+    <form method='post' name='mainform' action='/ftgw/pasw/service/dublinSimulator'>
+      <table border=0>
+        <tr>
+          <td width=120><font face='arial,helvetica'>SSN:</font></td>
+          <td width=200 align=right><input id="ssn" name='ssn' maxlength='12' type='text' value=''></td>
+          <td><font face='arial,helvetica' size='1'></font></td>
+        </tr>
+        
+        <tr>
+          <td width=120><font face='arial,helvetica'>Plan ID:</font></td>
+          <td width=200 align=right><input id="planId" name='plan' maxlength='5' type='text' value=''></td>
+          <td><font face='arial,helvetica' size='1'></font></td>
+        </tr>
+         
+         <tr>
+          <td colspan='2' align='right' align='right'><input id="submit" type='submit' value="Start"></td>
+        </tr>
+        <tr>
+        <td width=120><font face='arial,helvetica'>Recently Used SSN's:</font></td>
+        </tr>
+        <!--QUICKLINKS--><tr><td colspan='2' align='right' align='right'><input class='quickLink' type='button' data-ssn='431433952'  data-planId='35022' value='431433952'/></td></tr><tr><td colspan='2' align='right' align='right'><input class='quickLink' type='button' data-ssn='208382580'  data-planId='56398' value='208382580'/></td></tr>     
+      </table>
+    </form>
+  </body>
+</html> {ThreadId=http-apr-8090-exec-10|File=DublinSimulatorController.java|Method=writeShortCut|Line=132|AppId=AP002360|TrackingId=8fe9d8f6-fc7d-43cf-bbc5-dc315e800ea3|RepId=|RefId=AP002360431433952|RequestUri=/ftgw/pasw/service/dublinSimulator|SessionId=63368F16DE95EC3DAA8D8084D9836A34|SID=5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77|MID=eee16d45b674fe11d688b9ac196951aa77}
+########################################
+2016/09/16 11:34:35:281 [Severity=WARN] message=Containsfalse {ThreadId=http-apr-8090-exec-10|File=DublinSimulatorController.java|Method=writeShortCut|Line=132|AppId=AP002360|TrackingId=8fe9d8f6-fc7d-43cf-bbc5-dc315e800ea3|RepId=|RefId=AP002360431433952|RequestUri=/ftgw/pasw/service/dublinSimulator|SessionId=63368F16DE95EC3DAA8D8084D9836A34|SID=5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77|MID=eee16d45b674fe11d688b9ac196951aa77}
+########################################
+2016/09/16 11:34:36:727 [Severity=INFO] message=Request endpoint: https://ast-platformqa1.fmr.com:443/conversion/2014/10/conversion/check/user/status {ThreadId=pool-7-thread-1|File=LoggingRequestInterceptor.java|Method=intercept|Line=93|AppId=AP002360|TrackingId=4ca5bc2b-0f7c-4c2a-9712-c60796da983c|RepId=|RefId=AP002360431433952|RequestUri=/ftgw/pasw/service/system/bootStrapData|SessionId=63368F16DE95EC3DAA8D8084D9836A34|SID=5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77|MID=eee16d45b674fe11d688b9ac196951aa77}
+########################################
+2016/09/16 11:34:36:728 [Severity=INFO] message=https://ast-platformqa1.fmr.com:443/conversion/2014/10/conversion/check/user/status ~ JSON Request body=# {"userIdentifier":{"mid":"eee16d45b674fe11d688b9ac196951aa77","sid":"5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77","retailLid":null,"filiLid":null,"fescoLid":"XXXXX3952","acmData":null,"pointOfEntry":"NETBENEFITS","repInformation":null,"role":null,"lbd":null,"prospectId":null,"groupId":null},"excludeExternalDataSources":false,"verbose":false,"scenarioId":{"productCode":"PASW","categoryCode":"DEF","managedAccountId":null,"entityId":null,"entityTypeCode":null,"id":null},"conversion":null,"checkPasViewUser":null} {ThreadId=pool-7-thread-1|File=LoggingRequestInterceptor.java|Method=intercept|Line=98|AppId=AP002360|TrackingId=4ca5bc2b-0f7c-4c2a-9712-c60796da983c|RepId=|RefId=AP002360431433952|RequestUri=/ftgw/pasw/service/system/bootStrapData|SessionId=63368F16DE95EC3DAA8D8084D9836A34|SID=5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77|MID=eee16d45b674fe11d688b9ac196951aa77}
+########################################
+2016/09/16 11:34:37:180 [Severity=INFO] message=https://ast-platformqa1.fmr.com:443/conversion/2014/10/conversion/check/user/status ~ JSON Response body=# {"userIdentifier":{"mid":"eee16d45b674fe11d688b9ac196951aa77","sid":"5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77","fescoLid":"XXXXX3952","pointOfEntry":"NETBENEFITS"},"resultCode":true,"userConverted":true}  {ThreadId=pool-7-thread-1|File=LoggingRequestInterceptor.java|Method=intercept|Line=132|AppId=AP002360|TrackingId=4ca5bc2b-0f7c-4c2a-9712-c60796da983c|RepId=|RefId=AP002360431433952|RequestUri=/ftgw/pasw/service/system/bootStrapData|SessionId=63368F16DE95EC3DAA8D8084D9836A34|SID=5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77|MID=eee16d45b674fe11d688b9ac196951aa77}
+########################################
+2016/09/16 11:34:37:181 [Severity=INFO] message=https://ast-platformqa1.fmr.com:443/conversion/2014/10/conversion/check/user/status ~ Total Time for execution : 0:00:00.453 {ThreadId=pool-7-thread-1|File=LoggingRequestInterceptor.java|Method=intercept|Line=136|AppId=AP002360|TrackingId=4ca5bc2b-0f7c-4c2a-9712-c60796da983c|RepId=|RefId=AP002360431433952|RequestUri=/ftgw/pasw/service/system/bootStrapData|SessionId=63368F16DE95EC3DAA8D8084D9836A34|SID=5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77|MID=eee16d45b674fe11d688b9ac196951aa77}
+########################################
+2016/09/16 11:34:37:219 [Severity=INFO] message=Request endpoint: https://ast-platformqa1.fmr.com:443/scenario/2014/10/scenario/get {ThreadId=http-apr-8090-exec-6|File=LoggingRequestInterceptor.java|Method=intercept|Line=93|AppId=AP002360|TrackingId=4ca5bc2b-0f7c-4c2a-9712-c60796da983c|RepId=|RefId=AP002360431433952|RequestUri=/ftgw/pasw/service/system/bootStrapData|SessionId=63368F16DE95EC3DAA8D8084D9836A34|SID=5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77|MID=eee16d45b674fe11d688b9ac196951aa77}
+########################################
+2016/09/16 11:34:37:220 [Severity=INFO] message=https://ast-platformqa1.fmr.com:443/scenario/2014/10/scenario/get ~ JSON Request body=# {"userIdentifier":{"mid":"eee16d45b674fe11d688b9ac196951aa77","sid":"5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77","retailLid":null,"filiLid":null,"fescoLid":"XXXXX3952","acmData":null,"pointOfEntry":"NETBENEFITS","repInformation":null,"role":null,"lbd":null,"prospectId":null,"groupId":null},"excludeExternalDataSources":false,"verbose":false,"scenarioId":{"productCode":"PASW","categoryCode":"DEF","managedAccountId":null,"entityId":null,"entityTypeCode":null,"id":null}} {ThreadId=http-apr-8090-exec-6|File=LoggingRequestInterceptor.java|Method=intercept|Line=98|AppId=AP002360|TrackingId=4ca5bc2b-0f7c-4c2a-9712-c60796da983c|RepId=|RefId=AP002360431433952|RequestUri=/ftgw/pasw/service/system/bootStrapData|SessionId=63368F16DE95EC3DAA8D8084D9836A34|SID=5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77|MID=eee16d45b674fe11d688b9ac196951aa77}
+########################################
+2016/09/16 11:34:37:372 [Severity=INFO] message=https://ast-platformqa1.fmr.com:443/scenario/2014/10/scenario/get ~ JSON Response body=# {"userIdentifier":{"mid":"eee16d45b674fe11d688b9ac196951aa77","sid":"5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77","fescoLid":"XXXXX3952","pointOfEntry":"NETBENEFITS"},"resultCode":true,"scenario":{"name":"DEF","productCode":"PASW","categoryCode":"DEF","effectiveDate":"2016-09-15T14:07:51.000+0000","createdBy":"AP002360","statusCode":"Active","planningEvaluations":[],"id":819051}}  {ThreadId=http-apr-8090-exec-6|File=LoggingRequestInterceptor.java|Method=intercept|Line=132|AppId=AP002360|TrackingId=4ca5bc2b-0f7c-4c2a-9712-c60796da983c|RepId=|RefId=AP002360431433952|RequestUri=/ftgw/pasw/service/system/bootStrapData|SessionId=63368F16DE95EC3DAA8D8084D9836A34|SID=5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77|MID=eee16d45b674fe11d688b9ac196951aa77}
+########################################
+2016/09/16 11:34:37:373 [Severity=INFO] message=https://ast-platformqa1.fmr.com:443/scenario/2014/10/scenario/get ~ Total Time for execution : 0:00:00.154 {ThreadId=http-apr-8090-exec-6|File=LoggingRequestInterceptor.java|Method=intercept|Line=136|AppId=AP002360|TrackingId=4ca5bc2b-0f7c-4c2a-9712-c60796da983c|RepId=|RefId=AP002360431433952|RequestUri=/ftgw/pasw/service/system/bootStrapData|SessionId=63368F16DE95EC3DAA8D8084D9836A34|SID=5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77|MID=eee16d45b674fe11d688b9ac196951aa77}
+########################################
+2016/09/16 11:34:37:390 [Severity=INFO] message=Request endpoint: https://ast-platformqa1.fmr.com:443/identity/2014/10/identity/household/get {ThreadId=http-apr-8090-exec-6|File=LoggingRequestInterceptor.java|Method=intercept|Line=93|AppId=AP002360|TrackingId=4ca5bc2b-0f7c-4c2a-9712-c60796da983c|RepId=|RefId=AP002360431433952|RequestUri=/ftgw/pasw/service/system/bootStrapData|SessionId=63368F16DE95EC3DAA8D8084D9836A34|SID=5d8a54aa-1ca8-11d5-81c8-0a2f8d42aa77|MID=eee16d45b674fe11d688b9ac196951aa77}
+########################################
+
+src/main/webapp/WEB-INF/web.xml:
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app version="2.5" xmlns="http://java.sun.com/xml/ns/javaee"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://java.sun.com/xml/ns/javaee http://java.sun.com/xml/ns/javaee/web-app_2_5.xsd"
+    id="webApp_ID">
+
+    <context-param>
+        <param-name>contextConfigLocation</param-name>
+        <param-value>com.pasw.virtualization.VirtualizationApplication</param-value>
+    </context-param>
+
+    <listener>
+        <listener-class>org.springframework.boot.legacy.context.web.SpringBootContextLoaderListener</listener-class>
+    </listener>
+
+	<servlet>
+		<servlet-name>rest</servlet-name>
+		<servlet-class>org.springframework.web.servlet.DispatcherServlet</servlet-class>
+		<init-param>
+            <param-name>contextAttribute</param-name>
+            <param-value>org.springframework.web.context.WebApplicationContext.ROOT</param-value>
+        </init-param>
+		<load-on-startup>1</load-on-startup>
+	</servlet>
+
+	<servlet-mapping>
+		<servlet-name>rest</servlet-name>
+		<url-pattern>/*</url-pattern>
+	</servlet-mapping>
+	
+</web-app>
+
+
+
+TestVirtualizationClient:
+package com.testsvc;
+
+
+
+import org.junit.Assert;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.SpringApplicationConfiguration;
+import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
+import org.springframework.test.context.web.WebAppConfiguration;
+
+import com.pasw.virtualization.VirtualizationApplication;
+import com.pasw.virtualization.client.VirtualizationClientImpl;
+
+@RunWith(SpringJUnit4ClassRunner.class)
+@SpringApplicationConfiguration(classes = VirtualizationApplication.class)
+@WebAppConfiguration
+public class TestVirtualizationClient {
+
+	/** The constant for REST Path. */
+	private static final String SERVICE_2014_10_WORKPLACEPLAN_GET = "/workplaceplan/2014/10/workplaceplan/get";
+	
+	/** The Constant testUrl. */
+	private final static String testUrl = "http://localhost:8080";
+	
+	@Autowired
+	private VirtualizationClientImpl client;
+
+	/**
+	 * Test call Account.
+	 */
+	@Test
+	public void testGetWorkplacePlan()
+	{
+		client.setHost(testUrl);
+
+		String request = "dcm_513768818_35022";
+		final String response =
+		        client.callService(request, SERVICE_2014_10_WORKPLACEPLAN_GET);
+
+		Assert.assertNotNull(response);
+	}
+}
+
+
+POM.xml:
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<groupId>com.fmr.pasw.virtualization</groupId>
+	<artifactId>pasw-virtualization</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+	<packaging>war</packaging>
+
+	<name>pasw-virtualization</name>
+	<description>service virtualization</description>
+
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>1.4.1.RELEASE</version>
+	</parent>
+
+	<properties>
+		<start-class>com.pasw.virtualization.VirtualizationApplication</start-class>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+		<java.version>1.8</java.version>
+		<m2eclipse.wtp.contextRoot>/virtualization</m2eclipse.wtp.contextRoot>
+	</properties>
+
+	<dependencies>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-web</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-actuator</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-tomcat</artifactId>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-legacy</artifactId>
+			<version>1.0.0.RELEASE</version>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>commons-io</groupId>
+			<artifactId>commons-io</artifactId>
+			<version>2.4</version>
+		</dependency>
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpclient</artifactId>
+            <scope>test</scope>
+        </dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+			<plugin>
+				<artifactId>maven-release-plugin</artifactId>
+				<configuration>
+					<goals>pasw-virtualization:deploy</goals>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.tomcat.maven</groupId>
+				<artifactId>tomcat7-maven-plugin</artifactId>
+				<version>2.0</version>
+				<configuration>
+					<path>/</path>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+</project>
+
+
+.classpath:
+
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="src" output="target/classes" path="src/main/java">
+		<attributes>
+			<attribute name="optional" value="true"/>
+			<attribute name="maven.pomderived" value="true"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry excluding="**" kind="src" output="target/classes" path="src/main/resources">
+		<attributes>
+			<attribute name="maven.pomderived" value="true"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry kind="src" output="target/test-classes" path="src/test/java">
+		<attributes>
+			<attribute name="optional" value="true"/>
+			<attribute name="maven.pomderived" value="true"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry kind="con" path="org.eclipse.m2e.MAVEN2_CLASSPATH_CONTAINER">
+		<attributes>
+			<attribute name="maven.pomderived" value="true"/>
+			<attribute name="org.eclipse.jst.component.dependency" value="/WEB-INF/lib"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER">
+		<attributes>
+			<attribute name="owner.project.facets" value="java"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry kind="output" path="target/classes"/>
+</classpath>
+
+.project:
+<?xml version="1.0" encoding="UTF-8"?>
+<projectDescription>
+	<name>gae-demo</name>
+	<comment></comment>
+	<projects>
+	</projects>
+	<buildSpec>
+		<buildCommand>
+			<name>org.eclipse.wst.jsdt.core.javascriptValidator</name>
+			<arguments>
+			</arguments>
+		</buildCommand>
+		<buildCommand>
+			<name>org.eclipse.jdt.core.javabuilder</name>
+			<arguments>
+			</arguments>
+		</buildCommand>
+		<buildCommand>
+			<name>org.eclipse.wst.common.project.facet.core.builder</name>
+			<arguments>
+			</arguments>
+		</buildCommand>
+		<buildCommand>
+			<name>org.springframework.ide.eclipse.core.springbuilder</name>
+			<arguments>
+			</arguments>
+		</buildCommand>
+		<buildCommand>
+			<name>org.eclipse.wst.validation.validationbuilder</name>
+			<arguments>
+			</arguments>
+		</buildCommand>
+		<buildCommand>
+			<name>org.eclipse.m2e.core.maven2Builder</name>
+			<arguments>
+			</arguments>
+		</buildCommand>
+	</buildSpec>
+	<natures>
+		<nature>org.eclipse.jem.workbench.JavaEMFNature</nature>
+		<nature>org.eclipse.wst.common.modulecore.ModuleCoreNature</nature>
+		<nature>org.sonar.ide.eclipse.core.sonarNature</nature>
+		<nature>org.springframework.ide.eclipse.core.springnature</nature>
+		<nature>org.eclipse.jdt.core.javanature</nature>
+		<nature>org.eclipse.m2e.core.maven2Nature</nature>
+		<nature>org.eclipse.wst.common.project.facet.core.nature</nature>
+		<nature>org.eclipse.wst.jsdt.core.jsNature</nature>
+	</natures>
+</projectDescription>
+
+
